@@ -21,6 +21,8 @@
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             text-align: center;
+            max-width: 600px;
+            width: 100%;
         }
 
         #videoPreview {
@@ -59,13 +61,44 @@
             margin: 10px 0;
         }
 
-        #result {
+        #status {
+            margin: 10px 0;
+            color: #666;
+            min-height: 20px;
+        }
+
+        .result-container {
             margin-top: 20px;
+            border: 2px dashed #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         #finalGif {
             max-width: 400px;
+            max-height: 900px;
             display: none;
+        }
+
+        .progress {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
         }
     </style>
 </head>
@@ -74,11 +107,15 @@
         <h1>Video Photobooth</h1>
         <video id="videoPreview" autoplay muted></video>
         <div id="countdown"></div>
+        <div id="status"></div>
+        <div class="progress">
+            <div class="progress-bar"></div>
+        </div>
         <div class="controls">
             <button id="startBtn">Start Capture</button>
             <button id="downloadBtn" disabled>Download GIF</button>
         </div>
-        <div id="result">
+        <div class="result-container">
             <img id="finalGif" alt="Final GIF">
         </div>
     </div>
@@ -89,6 +126,9 @@
         const downloadBtn = document.getElementById('downloadBtn');
         const countdownDisplay = document.getElementById('countdown');
         const finalGif = document.getElementById('finalGif');
+        const statusDisplay = document.getElementById('status');
+        const progressBar = document.querySelector('.progress-bar');
+        const progressContainer = document.querySelector('.progress');
         
         let mediaRecorder;
         let videoChunks = [];
@@ -105,7 +145,8 @@
                 return stream;
             } catch (err) {
                 console.error('Error accessing camera:', err);
-                alert('Unable to access camera. Please ensure you have granted camera permissions.');
+                statusDisplay.textContent = 'Error: Unable to access camera. Please ensure you have granted camera permissions.';
+                throw err;
             }
         }
 
@@ -134,7 +175,6 @@
                     const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
                     const videoUrl = URL.createObjectURL(videoBlob);
                     
-                    // Create a video element to extract frames
                     const video = document.createElement('video');
                     video.src = videoUrl;
                     video.muted = true;
@@ -142,7 +182,6 @@
                     video.onloadeddata = () => {
                         video.play();
                         
-                        // Capture middle frame
                         setTimeout(() => {
                             const canvas = document.createElement('canvas');
                             canvas.width = 400;
@@ -150,8 +189,10 @@
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                             
+                            // Clean up
+                            URL.revokeObjectURL(videoUrl);
                             resolve(canvas);
-                        }, 1000); // Capture frame at 1 second (middle of 2-second recording)
+                        }, 1000);
                     };
                 };
                 
@@ -162,6 +203,9 @@
 
         function createGif(frames) {
             return new Promise((resolve) => {
+                statusDisplay.textContent = 'Creating GIF...';
+                progressContainer.style.display = 'block';
+                
                 const gif = new GIF({
                     workers: 2,
                     quality: 10,
@@ -169,20 +213,24 @@
                     height: 900
                 });
 
-                // Create a canvas to stack the frames vertically
                 const finalCanvas = document.createElement('canvas');
                 finalCanvas.width = 400;
                 finalCanvas.height = 900;
                 const ctx = finalCanvas.getContext('2d');
 
-                // Stack frames vertically
                 frames.forEach((frame, index) => {
                     ctx.drawImage(frame, 0, index * 300);
                 });
 
                 gif.addFrame(finalCanvas, { delay: 1000 });
                 
+                gif.on('progress', (p) => {
+                    progressBar.style.width = `${p * 100}%`;
+                });
+
                 gif.on('finished', (blob) => {
+                    progressContainer.style.display = 'none';
+                    statusDisplay.textContent = 'GIF created! Click Download to save.';
                     resolve(blob);
                 });
 
@@ -191,38 +239,47 @@
         }
 
         startBtn.addEventListener('click', async () => {
-            startBtn.disabled = true;
-            downloadBtn.disabled = true;
-            finalGif.style.display = 'none';
-            recordings = [];
-            captureCount = 0;
-            
-            const stream = await setupCamera();
-            
-            // Capture 3 videos
-            for (let i = 0; i < 3; i++) {
-                const frame = await captureVideo(stream);
-                recordings.push(frame);
-                captureCount++;
+            try {
+                startBtn.disabled = true;
+                downloadBtn.disabled = true;
+                finalGif.style.display = 'none';
+                recordings = [];
+                captureCount = 0;
+                
+                const stream = await setupCamera();
+                
+                // Capture 3 videos
+                for (let i = 0; i < 3; i++) {
+                    statusDisplay.textContent = `Taking capture ${i + 1} of 3...`;
+                    const frame = await captureVideo(stream);
+                    recordings.push(frame);
+                    captureCount++;
+                }
+                
+                // Create and display final GIF
+                const gifBlob = await createGif(recordings);
+                const gifUrl = URL.createObjectURL(gifBlob);
+                finalGif.src = gifUrl;
+                finalGif.style.display = 'block';
+                
+                // Clean up
+                stream.getTracks().forEach(track => track.stop());
+                startBtn.disabled = false;
+                downloadBtn.disabled = false;
+                
+                // Setup download
+                downloadBtn.onclick = () => {
+                    const link = document.createElement('a');
+                    link.href = gifUrl;
+                    link.download = 'photobooth.gif';
+                    link.click();
+                    statusDisplay.textContent = 'GIF downloaded!';
+                };
+            } catch (error) {
+                startBtn.disabled = false;
+                statusDisplay.textContent = 'An error occurred. Please try again.';
+                console.error('Error:', error);
             }
-            
-            // Create and display final GIF
-            const gifBlob = await createGif(recordings);
-            finalGif.src = URL.createObjectURL(gifBlob);
-            finalGif.style.display = 'block';
-            
-            // Clean up
-            stream.getTracks().forEach(track => track.stop());
-            startBtn.disabled = false;
-            downloadBtn.disabled = false;
-            
-            // Setup download
-            downloadBtn.onclick = () => {
-                const link = document.createElement('a');
-                link.href = finalGif.src;
-                link.download = 'photobooth.gif';
-                link.click();
-            };
         });
     </script>
 </div>
