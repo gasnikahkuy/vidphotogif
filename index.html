@@ -2,8 +2,10 @@
 <html>
 <head>
     <title>Video Photobooth</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js"></script>
+    <!-- GIF Encoder libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif-encoder/0.7.2/LZWEncoder.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif-encoder/0.7.2/NeuQuant.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif-encoder/0.7.2/GIFEncoder.min.js"></script>
     <style>
         /* Previous styles remain the same */
         body {
@@ -82,7 +84,7 @@
 
         #finalGif {
             max-width: 400px;
-            max-height: 900px;
+            max-height: 300px;
             display: none;
         }
 
@@ -100,23 +102,6 @@
             border: 1px solid #ccc;
             border-radius: 4px;
         }
-
-        .progress {
-            width: 100%;
-            height: 20px;
-            background-color: #f0f0f0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 10px 0;
-            display: none;
-        }
-
-        .progress-bar {
-            width: 0%;
-            height: 100%;
-            background-color: #007bff;
-            transition: width 0.3s ease;
-        }
     </style>
 </head>
 <body>
@@ -126,9 +111,6 @@
         <div id="countdown"></div>
         <div id="status"></div>
         <div class="preview-frames"></div>
-        <div class="progress">
-            <div class="progress-bar"></div>
-        </div>
         <div class="controls">
             <button id="startBtn">Start Capture</button>
             <button id="downloadBtn" disabled>Download GIF</button>
@@ -145,8 +127,6 @@
         const countdownDisplay = document.getElementById('countdown');
         const finalGif = document.getElementById('finalGif');
         const statusDisplay = document.getElementById('status');
-        const progressBar = document.querySelector('.progress-bar');
-        const progressContainer = document.querySelector('.progress');
         const previewFrames = document.querySelector('.preview-frames');
         
         let mediaRecorder;
@@ -231,39 +211,25 @@
 
         function createGif(frames) {
             return new Promise((resolve) => {
-                statusDisplay.textContent = 'Creating GIF...';
-                progressContainer.style.display = 'block';
-                
-                const gif = new GIF({
-                    workers: 2,
-                    quality: 10,
-                    width: 400,
-                    height: 900,
-                    workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+                const encoder = new GIFEncoder();
+                encoder.setRepeat(0); // 0 for repeat, -1 for no-repeat
+                encoder.setDelay(1000); // 1 second delay between frames
+                encoder.setSize(400, 300);
+                encoder.start();
+
+                frames.forEach(frame => {
+                    const ctx = frame.getContext('2d');
+                    const imageData = ctx.getImageData(0, 0, frame.width, frame.height).data;
+                    encoder.addFrame(imageData);
                 });
 
-                const finalCanvas = document.createElement('canvas');
-                finalCanvas.width = 400;
-                finalCanvas.height = 900;
-                const ctx = finalCanvas.getContext('2d');
-
-                frames.forEach((frame, index) => {
-                    ctx.drawImage(frame, 0, index * 300);
-                });
-
-                gif.addFrame(finalCanvas, { delay: 1000 });
-                
-                gif.on('progress', (p) => {
-                    progressBar.style.width = `${p * 100}%`;
-                });
-
-                gif.on('finished', (blob) => {
-                    progressContainer.style.display = 'none';
-                    statusDisplay.textContent = 'GIF created! Click Download to save.';
-                    resolve(blob);
-                });
-
-                gif.render();
+                encoder.finish();
+                const binaryGif = encoder.stream().getData();
+                const bytes = new Uint8Array(binaryGif.length);
+                for (let i = 0; i < binaryGif.length; i++) {
+                    bytes[i] = binaryGif.charCodeAt(i);
+                }
+                resolve(new Blob([bytes], { type: 'image/gif' }));
             });
         }
 
@@ -286,6 +252,7 @@
                     captureCount++;
                 }
                 
+                statusDisplay.textContent = 'Creating GIF...';
                 // Create and display final GIF
                 const gifBlob = await createGif(recordings);
                 const gifUrl = URL.createObjectURL(gifBlob);
@@ -296,6 +263,7 @@
                 stream.getTracks().forEach(track => track.stop());
                 startBtn.disabled = false;
                 downloadBtn.disabled = false;
+                statusDisplay.textContent = 'GIF created! Click Download to save.';
                 
                 // Setup download
                 downloadBtn.onclick = () => {
